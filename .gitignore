@@ -1,0 +1,17 @@
+/target
+Cargo.lock
+
+# Claude Code
+.claude/
+
+# Editor/IDE
+*.swp
+*.swo
+*~
+*.orig
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

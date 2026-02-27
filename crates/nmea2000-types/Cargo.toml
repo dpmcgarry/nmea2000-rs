@@ -1,0 +1,25 @@
+[package]
+name = "nmea2000-types"
+description = "Core types and protocol logic for NMEA 2000 message encoding and decoding"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+std = []
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "field_bench"
+harness = false
+
+[[bench]]
+name = "fast_packet_bench"
+harness = false
+
+[lints]
+workspace = true

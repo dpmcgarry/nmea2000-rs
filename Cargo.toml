@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nmea2000-types",
+    "crates/nmea2000-codegen",
+    "crates/nmea2000-pgns",
+    "crates/nmea2000",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/herostrat/nmea2000-rs"
+keywords = ["nmea2000", "can-bus", "marine", "canboat"]
+categories = ["embedded", "parser-implementations", "encoding"]
+
+[workspace.dependencies]
+nmea2000-types = { path = "crates/nmea2000-types" }
+nmea2000-codegen = { path = "crates/nmea2000-codegen" }
+nmea2000-pgns = { path = "crates/nmea2000-pgns" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_lossless = "allow"
+module_name_repetitions = "allow"

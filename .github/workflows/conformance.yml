@@ -1,0 +1,76 @@
+name: Conformance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  conformance:
+    name: Conformance & Performance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build canboat from source
+        run: |
+          git clone --depth 1 https://github.com/canboat/canboat.git /tmp/canboat
+          cd /tmp/canboat
+          make -j$(nproc)
+          echo "/tmp/canboat/rel/linux-x86_64" >> $GITHUB_PATH
+
+      - name: Verify canboat
+        run: analyzer -version 2>&1 || echo "canboat analyzer ready"
+
+      - name: Run conformance tests
+        run: cargo test --package nmea2000-pgns --test conformance -- --nocapture
+
+      - name: Run full workspace tests
+        run: cargo test --workspace
+
+      - name: Canboat reference decode
+        run: |
+          echo "::group::Canboat JSON output"
+          analyzer -json < data/conformance/pgn-test.in
+          echo "::endgroup::"
+          LINES=$(analyzer -json < data/conformance/pgn-test.in | wc -l)
+          echo "canboat decoded $LINES messages from test vectors"
+
+      - name: Performance comparison
+        run: |
+          # Generate a 10k-message test corpus by repeating test vectors
+          CORPUS=$(mktemp)
+          for i in $(seq 1 600); do
+            grep -v '^#' data/conformance/pgn-test.in | grep -v '^$'
+          done > "$CORPUS"
+          LINES=$(wc -l < "$CORPUS")
+          echo "Test corpus: $LINES messages"
+
+          echo ""
+          echo "--- canboat analyzer ---"
+          time analyzer -json < "$CORPUS" > /dev/null 2>&1
+
+          echo ""
+          echo "--- nmea2000-rs (Criterion) ---"
+          cargo bench --package nmea2000-pgns --bench throughput_bench 2>&1 \
+            | grep -E "time:|throughput|Elements" || true
+
+          echo ""
+          echo "--- Per-PGN decode times ---"
+          cargo bench --package nmea2000-pgns --bench decode_bench 2>&1 \
+            | grep "time:" || true
+
+          rm -f "$CORPUS"

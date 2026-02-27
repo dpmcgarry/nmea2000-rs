@@ -1,0 +1,19 @@
+[package]
+name = "nmea2000"
+description = "High-performance NMEA 2000 protocol library for encoding and decoding maritime messages"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["socketcan"]
+socketcan = ["dep:socketcan"]
+
+[dependencies]
+nmea2000-types.workspace = true
+nmea2000-pgns.workspace = true
+socketcan = { version = "3", optional = true }
+
+[lints]
+workspace = true
