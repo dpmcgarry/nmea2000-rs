@@ -224,6 +224,21 @@ pub fn string_lz_total_len(data: &[u8]) -> usize {
     1 + data[0] as usize
 }
 
+/// Parse a `STRING_FIX` (fixed-length ASCII) field.
+///
+/// Strips trailing padding bytes (`0xFF`, `\0`, `@`, whitespace) and then
+/// validates the remaining bytes as UTF-8.
+/// Returns `None` if the result is empty or contains invalid UTF-8.
+#[must_use]
+pub fn parse_string_fix(bytes: &[u8]) -> Option<&str> {
+    // Strip trailing padding bytes first (0xFF is not valid UTF-8, must go before validation)
+    let end = bytes
+        .iter()
+        .rposition(|&b| !matches!(b, 0xFF | 0x00 | b'@' | b' ' | b'\t' | b'\r' | b'\n'))?;
+    let s = core::str::from_utf8(&bytes[..=end]).ok()?;
+    if s.is_empty() { None } else { Some(s) }
+}
+
 /// Decode a BCD (Binary Coded Decimal) field.
 ///
 /// Each nibble (4 bits) encodes one decimal digit (0-9).
@@ -416,6 +431,45 @@ mod tests {
         assert_eq!(parse_string_lz(&[]), None);
         assert_eq!(parse_string_lz(&[0x00]), None);
         assert_eq!(string_lz_total_len(&[]), 0);
+    }
+
+    #[test]
+    fn parse_string_fix_ascii() {
+        assert_eq!(parse_string_fix(b"HELLO"), Some("HELLO"));
+    }
+
+    #[test]
+    fn parse_string_fix_null_padded() {
+        assert_eq!(parse_string_fix(b"CALL\0\0\0"), Some("CALL"));
+    }
+
+    #[test]
+    fn parse_string_fix_at_padded() {
+        // AIS uses '@' as padding
+        assert_eq!(parse_string_fix(b"NCC1701@@@@@@@@@@@@@"), Some("NCC1701"));
+    }
+
+    #[test]
+    fn parse_string_fix_ff_padded() {
+        assert_eq!(parse_string_fix(b"TEST\xff\xff\xff\xff"), Some("TEST"));
+    }
+
+    #[test]
+    fn parse_string_fix_whitespace_padded() {
+        assert_eq!(parse_string_fix(b"SHIP   "), Some("SHIP"));
+    }
+
+    #[test]
+    fn parse_string_fix_empty() {
+        assert_eq!(parse_string_fix(b""), None);
+        assert_eq!(parse_string_fix(b"\0\0\0"), None);
+        assert_eq!(parse_string_fix(b"@@@"), None);
+        assert_eq!(parse_string_fix(b"   "), None);
+    }
+
+    #[test]
+    fn parse_string_fix_invalid_utf8() {
+        assert_eq!(parse_string_fix(&[0x80, 0x81, 0x82]), None);
     }
 
     #[test]

@@ -445,7 +445,7 @@ fn v17_radio_frequency_mode_power() {
         1.0,
         "tx_frequency",
     );
-    assert_eq!(msg.radio_channel(), b"900016");
+    assert_eq!(msg.radio_channel(), Some("900016"));
     assert_eq!(msg.tx_power(), Some(25));
     assert_eq!(msg.mode_raw(), Some(0));
     assert_eq!(msg.channel_bandwidth(), Some(25000));
@@ -994,5 +994,79 @@ fn debug_shows_decoded_fields() {
     assert!(
         !dbg.contains("[0,"),
         "Debug should not show raw byte array, got: {dbg}"
+    );
+}
+
+// ──────────────────────────────────────────────────
+// STRING_FIX fields
+// ──────────────────────────────────────────────────
+
+/// Decode AIS Class B static data (msg 24 Part A) with a known name.
+/// Name field is 20 bytes at offset 5, padded with '@' (AIS convention).
+#[test]
+fn string_fix_decode_ais_name() {
+    use nmea2000_pgns::ais_class_b_static_data_msg24_part_a::AisClassBStaticDataMsg24PartA;
+    use nmea2000_types::PgnMessage;
+
+    let mut data = [0u8; 27];
+    // Message ID = 24 (6 bits), Repeat = 0 (2 bits)
+    data[0] = 24;
+    // User ID (MMSI) = 123456789 at bits 8..40
+    let mmsi: u32 = 123456789;
+    data[1..5].copy_from_slice(&mmsi.to_le_bytes());
+    // Name at bytes 5..25: "ENTERPRISE" padded with '@'
+    let name_bytes = b"ENTERPRISE@@@@@@@@@@";
+    data[5..25].copy_from_slice(name_bytes);
+
+    let msg = AisClassBStaticDataMsg24PartA::decode(&data).unwrap();
+    assert_eq!(msg.name(), Some("ENTERPRISE"));
+    assert_eq!(msg.name_raw(), b"ENTERPRISE@@@@@@@@@@");
+    assert_eq!(msg.user_id(), Some(123456789));
+}
+
+/// Roundtrip: build with builder, decode, verify string field.
+#[test]
+fn string_fix_builder_roundtrip() {
+    use nmea2000_pgns::ais_class_b_static_data_msg24_part_a::AisClassBStaticDataMsg24PartA;
+    use nmea2000_types::PgnMessage;
+
+    let msg = AisClassBStaticDataMsg24PartA::builder()
+        .name("TESTSHIP")
+        .sequence_id(42)
+        .build();
+
+    let mut buf = [0u8; 27];
+    msg.encode(&mut buf).unwrap();
+    let decoded = AisClassBStaticDataMsg24PartA::decode(&buf).unwrap();
+
+    assert_eq!(decoded.name(), Some("TESTSHIP"));
+    assert_eq!(decoded.sequence_id(), Some(42));
+}
+
+/// All-0xFF data → name() returns None (all padding).
+#[test]
+fn string_fix_all_unknown() {
+    use nmea2000_pgns::ais_class_b_static_data_msg24_part_a::AisClassBStaticDataMsg24PartA;
+    use nmea2000_types::PgnMessage;
+
+    let data = [0xFF; 27];
+    let msg = AisClassBStaticDataMsg24PartA::decode(&data).unwrap();
+    assert_eq!(msg.name(), None);
+}
+
+/// Debug output shows string value, not raw bytes.
+#[test]
+fn string_fix_debug_shows_string() {
+    use nmea2000_pgns::ais_class_b_static_data_msg24_part_a::AisClassBStaticDataMsg24PartA;
+    use nmea2000_types::PgnMessage;
+
+    let msg = AisClassBStaticDataMsg24PartA::builder()
+        .name("MYSHIP")
+        .build();
+
+    let dbg = format!("{msg:?}");
+    assert!(
+        dbg.contains("MYSHIP"),
+        "Debug should show string value, got: {dbg}"
     );
 }

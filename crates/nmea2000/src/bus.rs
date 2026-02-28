@@ -6,6 +6,40 @@ use nmea2000_types::{
     IsoTpManager, PacketType, Pgn, PgnMessage, RawMessage,
 };
 
+/// Message-level NMEA 2000 transport.
+///
+/// This is the high-level trait for transports that deliver complete
+/// PGN messages. Frame-level transports (like `SocketCAN` and SLCAN)
+/// implement [`CanTransport`] instead and get this automatically
+/// through [`N2kBus`].
+///
+/// Message-level transports (like Actisense NGT-1) implement this
+/// trait directly since they handle reassembly internally.
+pub trait N2kTransport {
+    /// Send a complete NMEA 2000 message.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the message cannot be sent.
+    fn send_message(&mut self, msg: &RawMessage) -> io::Result<()>;
+
+    /// Receive the next complete NMEA 2000 message (blocking).
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if reading from the transport fails.
+    fn receive_message(&mut self) -> io::Result<RawMessage>;
+
+    /// Try to receive a complete message without blocking.
+    ///
+    /// Returns `Ok(None)` if no message is available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if reading from the transport fails.
+    fn try_receive_message(&mut self) -> io::Result<Option<RawMessage>>;
+}
+
 /// Abstraction over a CAN bus transport.
 ///
 /// Implement this trait to use [`N2kBus`] with any CAN interface.
@@ -66,6 +100,21 @@ impl N2kBus<crate::transport::SocketCanTransport> {
     /// Returns an I/O error if the timeout cannot be set.
     pub fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> io::Result<()> {
         self.transport.set_read_timeout(timeout)
+    }
+}
+
+#[cfg(feature = "slcan")]
+impl N2kBus<crate::transport::SlcanTransport> {
+    /// Open an NMEA 2000 bus on an SLCAN serial adapter.
+    ///
+    /// Initializes the adapter at 250 kbps and opens the CAN channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the serial port cannot be opened.
+    pub fn open_slcan(port_path: &str) -> io::Result<Self> {
+        let transport = crate::transport::SlcanTransport::open(port_path)?;
+        Ok(Self::new(transport))
     }
 }
 
@@ -301,5 +350,28 @@ impl<T: CanTransport> N2kBus<T> {
             priority,
             data: data.to_vec(),
         }))
+    }
+}
+
+impl<T: CanTransport> N2kTransport for N2kBus<T> {
+    fn send_message(&mut self, msg: &RawMessage) -> io::Result<()> {
+        self.send_raw(
+            msg.pgn,
+            msg.source,
+            msg.priority,
+            msg.destination.unwrap_or(0xFF),
+            &msg.data,
+        )
+        .map_err(|e| io::Error::other(e.to_string()))
+    }
+
+    fn receive_message(&mut self) -> io::Result<RawMessage> {
+        self.read_message()
+            .map_err(|e| io::Error::other(e.to_string()))
+    }
+
+    fn try_receive_message(&mut self) -> io::Result<Option<RawMessage>> {
+        self.try_read_message()
+            .map_err(|e| io::Error::other(e.to_string()))
     }
 }

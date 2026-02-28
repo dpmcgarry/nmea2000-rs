@@ -63,6 +63,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p nmea2000 --no-default-features
 
+  check-slcan:
+    name: Check (slcan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p nmea2000 --no-default-features --features slcan
+
+  check-actisense:
+    name: Check (actisense)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p nmea2000 --no-default-features --features actisense
+
   doc:
     name: Documentation
     runs-on: ubuntu-latest

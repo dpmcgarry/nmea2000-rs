@@ -9,11 +9,14 @@ repository.workspace = true
 [features]
 default = ["socketcan"]
 socketcan = ["dep:socketcan"]
+slcan = ["dep:serialport"]
+actisense = ["dep:serialport"]
 
 [dependencies]
 nmea2000-types.workspace = true
 nmea2000-pgns.workspace = true
 socketcan = { version = "3", optional = true }
+serialport = { version = "4", optional = true }
 
 [lints]
 workspace = true

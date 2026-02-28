@@ -1402,6 +1402,23 @@ fn generate_one_repeating_set(
     })
 }
 
+/// Build doc attributes for a field accessor.
+///
+/// Returns `#[doc(alias = "Display Name")] #[doc = "description"]` when the
+/// display name's `snake_case` differs from the Rust method name, otherwise
+/// just `#[doc = "description"]`.
+fn doc_attrs(field: &ResolvedField) -> TokenStream {
+    let doc = field.description.as_deref().unwrap_or(&field.display_name);
+    let alias_sn = field.display_name.to_snake_case();
+    if alias_sn != field.rust_name && !matches!(field.kind, FieldKind::Reserved | FieldKind::Spare)
+    {
+        let alias = &field.display_name;
+        quote! { #[doc(alias = #alias)] #[doc = #doc] }
+    } else {
+        quote! { #[doc = #doc] }
+    }
+}
+
 /// Generate a field accessor for a repeating set entry.
 /// The `relative_offset` is the bit offset within one repetition.
 #[allow(clippy::too_many_lines, clippy::match_same_arms)]
@@ -1412,7 +1429,7 @@ fn generate_repeating_entry_accessor(
 ) -> TokenStream {
     let method_name = format_ident!("{}", field.rust_name);
     let bit_length = field.bit_length;
-    let doc = field.description.as_deref().unwrap_or(&field.display_name);
+    let doc_attrs = doc_attrs(field);
 
     match &field.kind {
         FieldKind::Lookup {
@@ -1432,7 +1449,7 @@ fn generate_repeating_entry_accessor(
                         if nmea2000_types::field::is_unknown_unsigned(raw, #bit_length) { None } else { Some(raw) }
                     }
 
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<super::lookups::#enum_ident> {
                         let bit_offset = self.offset_bits + #relative_offset;
@@ -1443,7 +1460,7 @@ fn generate_repeating_entry_accessor(
                 }
             } else {
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<u64> {
                         let bit_offset = self.offset_bits + #relative_offset;
@@ -1457,7 +1474,7 @@ fn generate_repeating_entry_accessor(
             if let Some(res) = field.resolution {
                 if (res - 1.0).abs() < f64::EPSILON && field.offset.is_none() {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<i64> {
                             let bit_offset = self.offset_bits + #relative_offset;
@@ -1474,7 +1491,7 @@ fn generate_repeating_entry_accessor(
                         quote! {}
                     };
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<f64> {
                             let bit_offset = self.offset_bits + #relative_offset;
@@ -1486,7 +1503,7 @@ fn generate_repeating_entry_accessor(
                 }
             } else {
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<i64> {
                         let bit_offset = self.offset_bits + #relative_offset;
@@ -1500,7 +1517,7 @@ fn generate_repeating_entry_accessor(
             if let Some(res) = field.resolution {
                 if (res - 1.0).abs() < f64::EPSILON && field.offset.is_none() {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<u64> {
                             let bit_offset = self.offset_bits + #relative_offset;
@@ -1517,7 +1534,7 @@ fn generate_repeating_entry_accessor(
                         quote! {}
                     };
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<f64> {
                             let bit_offset = self.offset_bits + #relative_offset;
@@ -1529,7 +1546,7 @@ fn generate_repeating_entry_accessor(
                 }
             } else {
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<u64> {
                         let bit_offset = self.offset_bits + #relative_offset;
@@ -1541,7 +1558,7 @@ fn generate_repeating_entry_accessor(
         }
         FieldKind::Mmsi | FieldKind::ManufacturerCode | FieldKind::PgnRef => {
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<u64> {
                     let bit_offset = self.offset_bits + #relative_offset;
@@ -1550,10 +1567,10 @@ fn generate_repeating_entry_accessor(
                 }
             }
         }
-        FieldKind::Binary | FieldKind::StringFix { .. } => {
+        FieldKind::Binary => {
             let byte_len = bit_length.div_ceil(8);
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> &[u8] {
                     let byte_start = (self.offset_bits + #relative_offset) / 8;
@@ -1563,9 +1580,33 @@ fn generate_repeating_entry_accessor(
                 }
             }
         }
+        FieldKind::StringFix { .. } => {
+            let byte_len = bit_length.div_ceil(8);
+            let raw_method = format_ident!("{}_raw", field.rust_name);
+            let raw_doc = format!("Raw bytes for `{}`.", field.display_name);
+            quote! {
+                #doc_attrs
+                #[must_use]
+                pub fn #method_name(&self) -> Option<&str> {
+                    let byte_start = (self.offset_bits + #relative_offset) / 8;
+                    if byte_start >= self.data.len() { return None; }
+                    let end = (byte_start + #byte_len).min(self.data.len());
+                    nmea2000_types::field::parse_string_fix(&self.data[byte_start..end])
+                }
+
+                #[doc = #raw_doc]
+                #[must_use]
+                pub fn #raw_method(&self) -> &[u8] {
+                    let byte_start = (self.offset_bits + #relative_offset) / 8;
+                    let end = (byte_start + #byte_len).min(self.data.len());
+                    if byte_start >= self.data.len() { return &[]; }
+                    &self.data[byte_start..end]
+                }
+            }
+        }
         FieldKind::BitLookup { .. } => {
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<u64> {
                     let bit_offset = self.offset_bits + #relative_offset;
@@ -1588,7 +1629,7 @@ fn generate_dynamic_field_accessor(
     let method_name = format_ident!("{}", field.rust_name);
     let bit_offset = field.bit_offset;
     let bit_length = field.bit_length;
-    let doc = field.description.as_deref().unwrap_or(&field.display_name);
+    let doc_attrs = doc_attrs(field);
     let required_bytes = (bit_offset + bit_length).div_ceil(8);
 
     match &field.kind {
@@ -1616,7 +1657,7 @@ fn generate_dynamic_field_accessor(
                         }
                     }
 
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<super::lookups::#enum_ident> {
                         if self.raw.len() < #required_bytes { return None; }
@@ -1629,7 +1670,7 @@ fn generate_dynamic_field_accessor(
                 }
             } else {
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<u64> {
                         if self.raw.len() < #required_bytes { return None; }
@@ -1647,7 +1688,7 @@ fn generate_dynamic_field_accessor(
             if let Some(res) = field.resolution {
                 if (res - 1.0).abs() < f64::EPSILON && field.offset.is_none() {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<i64> {
                             if self.raw.len() < #required_bytes { return None; }
@@ -1663,7 +1704,7 @@ fn generate_dynamic_field_accessor(
                     #[allow(clippy::cast_precision_loss)]
                     let offset_f64 = offset as f64;
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<f64> {
                             if self.raw.len() < #required_bytes { return None; }
@@ -1677,7 +1718,7 @@ fn generate_dynamic_field_accessor(
                     }
                 } else {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<f64> {
                             if self.raw.len() < #required_bytes { return None; }
@@ -1692,7 +1733,7 @@ fn generate_dynamic_field_accessor(
                 }
             } else {
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<i64> {
                         if self.raw.len() < #required_bytes { return None; }
@@ -1710,7 +1751,7 @@ fn generate_dynamic_field_accessor(
             if let Some(res) = field.resolution {
                 if (res - 1.0).abs() < f64::EPSILON && field.offset.is_none() {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<u64> {
                             if self.raw.len() < #required_bytes { return None; }
@@ -1726,7 +1767,7 @@ fn generate_dynamic_field_accessor(
                     #[allow(clippy::cast_precision_loss)]
                     let offset_f64 = offset as f64;
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<f64> {
                             if self.raw.len() < #required_bytes { return None; }
@@ -1740,7 +1781,7 @@ fn generate_dynamic_field_accessor(
                     }
                 } else {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<f64> {
                             if self.raw.len() < #required_bytes { return None; }
@@ -1755,7 +1796,7 @@ fn generate_dynamic_field_accessor(
                 }
             } else {
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<u64> {
                         if self.raw.len() < #required_bytes { return None; }
@@ -1773,7 +1814,7 @@ fn generate_dynamic_field_accessor(
             let res = field.resolution.unwrap_or(1e-7);
             if field.is_signed {
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<f64> {
                         if self.raw.len() < #required_bytes { return None; }
@@ -1787,7 +1828,7 @@ fn generate_dynamic_field_accessor(
                 }
             } else {
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<f64> {
                         if self.raw.len() < #required_bytes { return None; }
@@ -1803,7 +1844,7 @@ fn generate_dynamic_field_accessor(
         }
         FieldKind::Float => {
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<f32> {
                     if self.raw.len() < #required_bytes { return None; }
@@ -1815,7 +1856,7 @@ fn generate_dynamic_field_accessor(
         }
         FieldKind::Date => {
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<u16> {
                     if self.raw.len() < #required_bytes { return None; }
@@ -1831,7 +1872,7 @@ fn generate_dynamic_field_accessor(
         FieldKind::Time => {
             let res = field.resolution.unwrap_or(0.0001);
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<f64> {
                     if self.raw.len() < #required_bytes { return None; }
@@ -1847,7 +1888,7 @@ fn generate_dynamic_field_accessor(
         // Mmsi/ManufacturerCode/PgnRef: same as unsigned Number without resolution
         FieldKind::Mmsi | FieldKind::ManufacturerCode | FieldKind::PgnRef => {
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<u64> {
                     if self.raw.len() < #required_bytes { return None; }
@@ -1856,13 +1897,36 @@ fn generate_dynamic_field_accessor(
                 }
             }
         }
-        FieldKind::Binary | FieldKind::StringFix { .. } => {
+        FieldKind::Binary => {
             let byte_offset = bit_offset / 8;
             let byte_len = bit_length.div_ceil(8);
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> &[u8] {
+                    let end = (#byte_offset + #byte_len).min(self.raw.len());
+                    if #byte_offset >= self.raw.len() { return &[]; }
+                    &self.raw[#byte_offset..end]
+                }
+            }
+        }
+        FieldKind::StringFix { .. } => {
+            let byte_offset = bit_offset / 8;
+            let byte_len = bit_length.div_ceil(8);
+            let raw_method = format_ident!("{}_raw", field.rust_name);
+            let raw_doc = format!("Raw bytes for `{}`.", field.display_name);
+            quote! {
+                #doc_attrs
+                #[must_use]
+                pub fn #method_name(&self) -> Option<&str> {
+                    if #byte_offset >= self.raw.len() { return None; }
+                    let end = (#byte_offset + #byte_len).min(self.raw.len());
+                    nmea2000_types::field::parse_string_fix(&self.raw[#byte_offset..end])
+                }
+
+                #[doc = #raw_doc]
+                #[must_use]
+                pub fn #raw_method(&self) -> &[u8] {
                     let end = (#byte_offset + #byte_len).min(self.raw.len());
                     if #byte_offset >= self.raw.len() { return &[]; }
                     &self.raw[#byte_offset..end]
@@ -1872,7 +1936,7 @@ fn generate_dynamic_field_accessor(
         FieldKind::StringLz | FieldKind::StringLau => {
             let byte_offset = bit_offset / 8;
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> &[u8] {
                     if #byte_offset < self.raw.len() {
@@ -1885,7 +1949,7 @@ fn generate_dynamic_field_accessor(
         }
         FieldKind::BitLookup { .. } => {
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<u64> {
                     if self.raw.len() < #required_bytes { return None; }
@@ -1900,7 +1964,7 @@ fn generate_dynamic_field_accessor(
         }
         FieldKind::Decimal => {
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<u64> {
                     if self.raw.len() < #required_bytes { return None; }
@@ -1927,7 +1991,7 @@ fn generate_dynoffset_accessor(
     enum_map: &HashMap<String, &ResolvedEnum>,
 ) -> TokenStream {
     let method_name = format_ident!("{}", field.rust_name);
-    let doc = field.description.as_deref().unwrap_or(&field.display_name);
+    let doc_attrs = doc_attrs(field);
     let bit_length = field.bit_length;
 
     // Generate skip steps (no early returns — callers check bounds afterward)
@@ -1942,7 +2006,7 @@ fn generate_dynoffset_accessor(
 
     match &field.kind {
         FieldKind::StringLau => quote! {
-            #[doc = #doc]
+            #doc_attrs
             #[must_use]
             pub fn #method_name(&self) -> Option<String> {
                 let data = &self.raw;
@@ -1952,7 +2016,7 @@ fn generate_dynoffset_accessor(
             }
         },
         FieldKind::StringLz => quote! {
-            #[doc = #doc]
+            #doc_attrs
             #[must_use]
             pub fn #method_name(&self) -> Option<&str> {
                 let data = &self.raw;
@@ -1972,7 +2036,7 @@ fn generate_dynoffset_accessor(
                 let res = field.resolution.unwrap_or(1.0);
                 if (res - 1.0).abs() < f64::EPSILON && field.offset.is_none() {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<i64> {
                             let data = &self.raw;
@@ -1984,7 +2048,7 @@ fn generate_dynoffset_accessor(
                     }
                 } else {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<f64> {
                             let data = &self.raw;
@@ -1999,7 +2063,7 @@ fn generate_dynoffset_accessor(
                 let res = field.resolution.unwrap_or(1.0);
                 if (res - 1.0).abs() < f64::EPSILON && field.offset.is_none() {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<u64> {
                             let data = &self.raw;
@@ -2011,7 +2075,7 @@ fn generate_dynoffset_accessor(
                     }
                 } else {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<f64> {
                             let data = &self.raw;
@@ -2027,7 +2091,7 @@ fn generate_dynoffset_accessor(
         FieldKind::Float => {
             let byte_len = bit_length.div_ceil(8);
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<f32> {
                     let data = &self.raw;
@@ -2056,7 +2120,7 @@ fn generate_dynoffset_accessor(
                     })
                     .collect();
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<super::lookups::#enum_ident> {
                         let data = &self.raw;
@@ -2072,7 +2136,7 @@ fn generate_dynoffset_accessor(
             } else {
                 // Fallback to raw value if enum not found
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<u64> {
                         let data = &self.raw;
@@ -2087,7 +2151,7 @@ fn generate_dynoffset_accessor(
         FieldKind::Latitude | FieldKind::Longitude => {
             let byte_len = bit_length.div_ceil(8);
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<f64> {
                     let data = &self.raw;
@@ -2098,12 +2162,38 @@ fn generate_dynoffset_accessor(
                 }
             }
         }
-        FieldKind::Binary | FieldKind::StringFix { .. } => {
+        FieldKind::Binary => {
             let byte_len = bit_length.div_ceil(8);
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> &[u8] {
+                    let data = &self.raw;
+                    #offset_setup
+                    let end = (offset + #byte_len).min(data.len());
+                    if offset >= data.len() { return &[]; }
+                    &data[offset..end]
+                }
+            }
+        }
+        FieldKind::StringFix { .. } => {
+            let byte_len = bit_length.div_ceil(8);
+            let raw_method = format_ident!("{}_raw", field.rust_name);
+            let raw_doc = format!("Raw bytes for `{}`.", field.display_name);
+            quote! {
+                #doc_attrs
+                #[must_use]
+                pub fn #method_name(&self) -> Option<&str> {
+                    let data = &self.raw;
+                    #offset_setup
+                    if offset >= data.len() { return None; }
+                    let end = (offset + #byte_len).min(data.len());
+                    nmea2000_types::field::parse_string_fix(&data[offset..end])
+                }
+
+                #[doc = #raw_doc]
+                #[must_use]
+                pub fn #raw_method(&self) -> &[u8] {
                     let data = &self.raw;
                     #offset_setup
                     let end = (offset + #byte_len).min(data.len());
@@ -2115,7 +2205,7 @@ fn generate_dynoffset_accessor(
         FieldKind::BitLookup { .. } => {
             let byte_len = bit_length.div_ceil(8);
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<u64> {
                     let data = &self.raw;
@@ -2129,7 +2219,7 @@ fn generate_dynoffset_accessor(
         FieldKind::Decimal => {
             let byte_len = bit_length.div_ceil(8);
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<u64> {
                     let data = &self.raw;
@@ -2151,7 +2241,7 @@ fn generate_field_accessor(
     let method_name = format_ident!("{}", field.rust_name);
     let bit_offset = field.bit_offset;
     let bit_length = field.bit_length;
-    let doc = field.description.as_deref().unwrap_or(&field.display_name);
+    let doc_attrs = doc_attrs(field);
 
     match &field.kind {
         FieldKind::Lookup {
@@ -2178,7 +2268,7 @@ fn generate_field_accessor(
                         }
                     }
 
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<super::lookups::#enum_ident> {
                         let raw = nmea2000_types::field::extract_uint(&self.raw, #bit_offset, #bit_length);
@@ -2191,7 +2281,7 @@ fn generate_field_accessor(
             } else {
                 // Fallback to raw value if enum not found
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<u64> {
                         let raw = nmea2000_types::field::extract_uint(&self.raw, #bit_offset, #bit_length);
@@ -2209,7 +2299,7 @@ fn generate_field_accessor(
                 if (res - 1.0).abs() < f64::EPSILON && field.offset.is_none() {
                     // Integer with resolution 1, no offset
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<i64> {
                             let raw = nmea2000_types::field::extract_int(&self.raw, #bit_offset, #bit_length);
@@ -2224,7 +2314,7 @@ fn generate_field_accessor(
                     #[allow(clippy::cast_precision_loss)]
                     let offset_f64 = offset as f64;
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<f64> {
                             let raw = nmea2000_types::field::extract_int(&self.raw, #bit_offset, #bit_length);
@@ -2237,7 +2327,7 @@ fn generate_field_accessor(
                     }
                 } else {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<f64> {
                             let raw = nmea2000_types::field::extract_int(&self.raw, #bit_offset, #bit_length);
@@ -2251,7 +2341,7 @@ fn generate_field_accessor(
                 }
             } else {
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<i64> {
                         let raw = nmea2000_types::field::extract_int(&self.raw, #bit_offset, #bit_length);
@@ -2269,7 +2359,7 @@ fn generate_field_accessor(
             if let Some(res) = field.resolution {
                 if (res - 1.0).abs() < f64::EPSILON && field.offset.is_none() {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<u64> {
                             let raw = nmea2000_types::field::extract_uint(&self.raw, #bit_offset, #bit_length);
@@ -2284,7 +2374,7 @@ fn generate_field_accessor(
                     #[allow(clippy::cast_precision_loss)]
                     let offset_f64 = offset as f64;
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<f64> {
                             let raw = nmea2000_types::field::extract_uint(&self.raw, #bit_offset, #bit_length);
@@ -2297,7 +2387,7 @@ fn generate_field_accessor(
                     }
                 } else {
                     quote! {
-                        #[doc = #doc]
+                        #doc_attrs
                         #[must_use]
                         pub fn #method_name(&self) -> Option<f64> {
                             let raw = nmea2000_types::field::extract_uint(&self.raw, #bit_offset, #bit_length);
@@ -2311,7 +2401,7 @@ fn generate_field_accessor(
                 }
             } else {
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<u64> {
                         let raw = nmea2000_types::field::extract_uint(&self.raw, #bit_offset, #bit_length);
@@ -2326,7 +2416,7 @@ fn generate_field_accessor(
         }
         FieldKind::Float => {
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<f32> {
                     let raw = nmea2000_types::field::extract_uint(&self.raw, #bit_offset, 32);
@@ -2339,7 +2429,7 @@ fn generate_field_accessor(
             let res = field.resolution.unwrap_or(1e-7);
             if field.is_signed {
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<f64> {
                         let raw = nmea2000_types::field::extract_int(&self.raw, #bit_offset, #bit_length);
@@ -2352,7 +2442,7 @@ fn generate_field_accessor(
                 }
             } else {
                 quote! {
-                    #[doc = #doc]
+                    #doc_attrs
                     #[must_use]
                     pub fn #method_name(&self) -> Option<f64> {
                         let raw = nmea2000_types::field::extract_uint(&self.raw, #bit_offset, #bit_length);
@@ -2367,7 +2457,7 @@ fn generate_field_accessor(
         }
         FieldKind::Date => {
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<u16> {
                     let raw = nmea2000_types::field::extract_uint(&self.raw, #bit_offset, #bit_length);
@@ -2382,7 +2472,7 @@ fn generate_field_accessor(
         FieldKind::Time => {
             let res = field.resolution.unwrap_or(0.0001);
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<f64> {
                     let raw = nmea2000_types::field::extract_uint(&self.raw, #bit_offset, #bit_length);
@@ -2396,7 +2486,7 @@ fn generate_field_accessor(
         }
         FieldKind::Mmsi | FieldKind::ManufacturerCode | FieldKind::PgnRef => {
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<u64> {
                     let raw = nmea2000_types::field::extract_uint(&self.raw, #bit_offset, #bit_length);
@@ -2408,13 +2498,34 @@ fn generate_field_accessor(
                 }
             }
         }
-        FieldKind::Binary | FieldKind::StringFix { .. } => {
+        FieldKind::Binary => {
             let byte_offset = bit_offset / 8;
             let byte_len = bit_length.div_ceil(8);
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> &[u8] {
+                    let end = (#byte_offset + #byte_len).min(self.raw.len());
+                    &self.raw[#byte_offset..end]
+                }
+            }
+        }
+        FieldKind::StringFix { .. } => {
+            let byte_offset = bit_offset / 8;
+            let byte_len = bit_length.div_ceil(8);
+            let raw_method = format_ident!("{}_raw", field.rust_name);
+            let raw_doc = format!("Raw bytes for `{}`.", field.display_name);
+            quote! {
+                #doc_attrs
+                #[must_use]
+                pub fn #method_name(&self) -> Option<&str> {
+                    let end = (#byte_offset + #byte_len).min(self.raw.len());
+                    nmea2000_types::field::parse_string_fix(&self.raw[#byte_offset..end])
+                }
+
+                #[doc = #raw_doc]
+                #[must_use]
+                pub fn #raw_method(&self) -> &[u8] {
                     let end = (#byte_offset + #byte_len).min(self.raw.len());
                     &self.raw[#byte_offset..end]
                 }
@@ -2424,7 +2535,7 @@ fn generate_field_accessor(
             // Variable-length strings — return what we can
             let byte_offset = bit_offset / 8;
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> &[u8] {
                     if #byte_offset < self.raw.len() {
@@ -2438,7 +2549,7 @@ fn generate_field_accessor(
         FieldKind::BitLookup { .. } => {
             // Return raw bits; individual flag checking can use bitwise ops
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<u64> {
                     let raw = nmea2000_types::field::extract_uint(&self.raw, #bit_offset, #bit_length);
@@ -2452,7 +2563,7 @@ fn generate_field_accessor(
         }
         FieldKind::Decimal => {
             quote! {
-                #[doc = #doc]
+                #doc_attrs
                 #[must_use]
                 pub fn #method_name(&self) -> Option<u64> {
                     nmea2000_types::field::decode_decimal(&self.raw, #bit_offset, #bit_length)
@@ -2606,6 +2717,19 @@ fn generate_builder_setter(field: &ResolvedField) -> Option<TokenStream> {
                 pub fn #method_name(mut self, value: f64) -> Self {
                     let raw = (value / #res) as u64;
                     nmea2000_types::field::insert_uint(&mut self.raw, #bit_offset, #bit_length, raw);
+                    self
+                }
+            })
+        }
+        FieldKind::StringFix { byte_length } => {
+            let byte_offset = bit_offset / 8;
+            let byte_len = *byte_length;
+            Some(quote! {
+                #[doc = #doc]
+                pub fn #method_name(mut self, value: &str) -> Self {
+                    let bytes = value.as_bytes();
+                    let len = bytes.len().min(#byte_len);
+                    self.raw[#byte_offset..#byte_offset + len].copy_from_slice(&bytes[..len]);
                     self
                 }
             })
