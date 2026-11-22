@@ -320,8 +320,10 @@ fn v06_engine_parameters_dynamic_full() {
 
 // ─── Heartbeat (PGN 126993) — vector #8 ────────────────────────────
 
-/// Vector #8: canboat: Data transmit offset raw=1 (00:00:00.01),
+/// Vector #8: canboat: Data transmit offset raw=1 (00:00:00.001),
 ///   Sequence Counter=36
+///
+/// canboat 10.0.0 changed this field's resolution from 0.01 s to 0.001 s.
 #[test]
 fn v08_heartbeat() {
     use nmea2000_pgns::heartbeat::Heartbeat;
@@ -329,11 +331,11 @@ fn v08_heartbeat() {
     assert_eq!(tv.pgn, 126993);
 
     let msg = Heartbeat::decode(&tv.data).unwrap();
-    // Data transmit offset: raw 1 * 0.01 = 0.01 s
+    // Data transmit offset: raw 1 * 0.001 = 0.001 s
     assert_near(
         msg.data_transmit_offset().unwrap(),
-        0.01,
         0.001,
+        0.0001,
         "data_transmit_offset",
     );
     assert_eq!(msg.sequence_counter(), Some(36));
@@ -875,11 +877,20 @@ fn roundtrip_water_depth() {
 // SECTION 6: Error handling
 // ═══════════════════════════════════════════════════════════════════════
 
+/// A short payload decodes like canboat does: fields that are present are
+/// read, and fields past the end of the data read as `None`.
 #[test]
-fn insufficient_data_returns_error() {
+fn short_payload_missing_fields_are_none() {
     use nmea2000_pgns::vessel_heading::VesselHeading;
-    let data = [0x00, 0x9F, 0x01, 0xFF];
-    assert!(VesselHeading::decode(&data).is_err());
+    // SID=0, heading raw 0x019F = 415 * 0.0001 rad; deviation, variation and
+    // reference are missing.
+    let data = [0x00, 0x9F, 0x01];
+    let msg = VesselHeading::decode(&data).unwrap();
+    assert_eq!(msg.sid(), Some(0));
+    assert_near(msg.heading().unwrap(), 0.0415, 0.0001, "heading");
+    assert_eq!(msg.deviation(), None);
+    assert_eq!(msg.variation(), None);
+    assert!(msg.reference().is_none());
 }
 
 // ═══════════════════════════════════════════════════════════════════════

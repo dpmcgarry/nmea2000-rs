@@ -192,6 +192,9 @@ pub struct PgnDef {
     pub repeating_field_set2_start_field: Option<u32>,
     #[serde(rename = "RepeatingFieldSet2CountField", default)]
     pub repeating_field_set2_count_field: Option<u32>,
+    /// Set when repeating set 2 is nested inside set 1 (canboat schema 2.9+).
+    #[serde(rename = "RepeatingFieldSet2Parent", default)]
+    pub repeating_field_set2_parent: Option<u32>,
     #[serde(rename = "TransmissionInterval", default)]
     pub transmission_interval: Option<u32>,
     #[serde(rename = "TransmissionIrregular", default)]

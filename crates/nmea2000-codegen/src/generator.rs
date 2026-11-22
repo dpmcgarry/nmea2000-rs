@@ -20,6 +20,46 @@ enum DynOffsetItem {
     FixedBytes(usize),
 }
 
+/// Generate the statements that give each fixed-width field cut off by a
+/// short payload its "unknown" value (all ones unsigned, `0x7F..FF` signed).
+/// The generated code expects `raw` and `have_bits` in scope.
+fn generate_short_fill(pgn: &ResolvedPgn, byte_length: usize) -> Vec<TokenStream> {
+    pgn.fields
+        .iter()
+        .filter(|f| {
+            !f.is_variable_length
+                && (1..=64).contains(&f.bit_length)
+                && f.bit_offset + f.bit_length <= byte_length * 8
+                && !matches!(
+                    f.kind,
+                    FieldKind::Reserved
+                        | FieldKind::Spare
+                        | FieldKind::StringFix { .. }
+                        | FieldKind::StringLz
+                        | FieldKind::StringLau
+                        | FieldKind::Binary
+                )
+        })
+        .map(|f| {
+            let off = f.bit_offset;
+            let len = f.bit_length;
+            let end = off + len;
+            let unknown: u64 = if f.is_signed {
+                (1u64 << (len - 1)) - 1
+            } else if len == 64 {
+                u64::MAX
+            } else {
+                (1u64 << len) - 1
+            };
+            quote! {
+                if have_bits < #end {
+                    nmea2000_types::field::insert_uint(&mut raw, #off, #len, #unknown);
+                }
+            }
+        })
+        .collect()
+}
+
 /// Generate token stream steps to skip past a series of dynamic offset items.
 ///
 /// Assumes `offset: usize` and `data: &[u8]` are in scope.
@@ -83,10 +123,16 @@ fn resolve_pgn(pgn_def: &PgnDef) -> ResolvedPgn {
     // Extract match criteria from fields with Match values
     let match_criteria = extract_match_criteria(pgn_def, &fields);
 
+    // Nested repeating sets (set 2 inside each set 1 entry) are not supported
+    // yet. Generate only the fixed fields for those PGNs; the payload is still
+    // available through `raw()`.
+    let nested_sets = pgn_def.repeating_field_set2_parent.is_some();
+
     let repeating_set1 = match (
         pgn_def.repeating_field_set1_size,
         pgn_def.repeating_field_set1_start_field,
     ) {
+        _ if nested_sets => None,
         (Some(size), Some(start)) => Some(RepeatingSet {
             size,
             start_field: start,
@@ -99,6 +145,7 @@ fn resolve_pgn(pgn_def: &PgnDef) -> ResolvedPgn {
         pgn_def.repeating_field_set2_size,
         pgn_def.repeating_field_set2_start_field,
     ) {
+        _ if nested_sets => None,
         (Some(size), Some(start)) => Some(RepeatingSet {
             size,
             start_field: start,
@@ -533,6 +580,8 @@ fn generate_pgn_code(pgn: &ResolvedPgn, enum_map: &HashMap<String, &ResolvedEnum
         .filter_map(generate_builder_setter)
         .collect();
 
+    let short_fill = generate_short_fill(pgn, byte_length);
+
     // Generate debug field entries for enhanced Debug impl
     let debug_fields: Vec<TokenStream> = pgn
         .fields
@@ -576,14 +625,20 @@ fn generate_pgn_code(pgn: &ResolvedPgn, enum_map: &HashMap<String, &ResolvedEnum
             const PACKET_TYPE: nmea2000_types::PacketType = #packet_type_token;
 
             fn decode(data: &[u8]) -> Result<Self, nmea2000_types::Error> {
-                if data.len() < #byte_length_lit {
-                    return Err(nmea2000_types::Error::InsufficientData {
-                        expected: #byte_length_lit,
-                        actual: data.len(),
-                    });
+                // As canboat does, a payload shorter than the full length
+                // still decodes: devices often omit trailing fields, and newer
+                // canboat versions add fields at the end. Missing bytes are
+                // filled with 0xFF, so the fields they hold read as `None`.
+                let n = data.len().min(#byte_length_lit);
+                let mut raw = [0xFFu8; #byte_length_lit];
+                raw[..n].copy_from_slice(&data[..n]);
+                if n < #byte_length_lit {
+                    // A field cut off by the end of the data gets its
+                    // "unknown" value. For signed fields that is 0x7F..FF,
+                    // not the all-ones padding.
+                    let have_bits = n * 8;
+                    #(#short_fill)*
                 }
-                let mut raw = [0u8; #byte_length_lit];
-                raw.copy_from_slice(&data[..#byte_length_lit]);
                 Ok(Self { raw })
             }
 
