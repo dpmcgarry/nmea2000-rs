@@ -1,0 +1,43 @@
+# Known mismatches against canboatjs fixtures.
+# Regenerate: CANBOATJS_BLESS=1 cargo test -p nmea2000-pgns --test canboatjs
+126208.js#2/numberOfParameters  # expected 1, got 102 (tol 0.5)
+126208.js#2/uniqueId  # expected 0, got 1 (tol 0.5)
+126720.js#0/seatalk1Command  # expected "Device Identification", got Ident("DeviceIndentification")
+127245.js#0/directionOrder  # expected 4, got None
+127497.js#0/instance  # expected 224, got None
+129025.js#1/latitude  # expected null, got Num(214.7483646)
+129025.js#1/longitude  # expected null, got Num(214.7483646)
+129029.js#2/altitude  # expected null, got Num(9223372036854.775)
+129029.js#2/geoidalSeparation  # expected null, got Num(21474836.46)
+129029.js#2/hdop  # expected null, got Num(327.66)
+129029.js#2/latitude  # expected null, got Num(922.3372036854776)
+129029.js#2/longitude  # expected null, got Num(922.3372036854776)
+129029.js#2/pdop  # expected null, got Num(327.66)
+129038.js#0/timeStamp  # expected 22, got None
+129039.js#0/timeStamp  # expected 59, got None
+129285.js#2/routeName  # expected "Fæke routé", got None
+129540.js#1/rangeResidualMode  # expected 2, got None
+129798.js#0/timeStamp  # expected 10, got None
+129810.js#1/mothershipUserId  # expected null, got Num(0.0)
+130820.js#2/track  # expected "Bohuslän", got None
+130824.js#0/annunciatorInstance  # field not exposed, expected 0
+130824.js#0/annunciatorState  # field not exposed, expected 0
+130842.js#0/messageId  # expected "Msg 24 Part A", got number 0
+130845.js#0/address  # expected 255, got None
+130845.js#0/key  # expected "Backlight level", got List([Num(255.0), Num(18.0)])
+130845.js#0/networkGroup  # field not exposed, expected "Default"
+130845.js#0/operation  # field not exposed, expected "Set"
+130845.js#0/value  # field not exposed, expected "90%"
+130845.js#1/address  # expected 255, got None
+130845.js#1/key  # expected "Backlight level", got List([Num(255.0), Num(18.0)])
+130845.js#1/networkGroup  # field not exposed, expected "Default"
+130845.js#1/operation  # field not exposed, expected "Set"
+130845.js#1/value  # field not exposed, expected "90%"
+130847.js#0/<case>  # decoded as Unknown
+60928.js#0/deviceFunction  # expected "Temperature", got number 130
+60928.js#1/deviceFunction  # expected "Radiotelephone", got number 190
+60928.js#1/deviceInstanceLower  # expected 7, got None
+65012.js#0/powerFactor  # expected 1, got 2.0000014336 (tol 0.0000305176)
+65025.js#0/powerFactor  # expected 0.8984375, got 1.8984388608 (tol 0.0000305176)
+65359.js#0/sid  # expected null, got List([Num(255.0)])
+65360.js#0/sid  # expected null, got List([Num(255.0)])
